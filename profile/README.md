@@ -35,4 +35,4 @@ Public-good tooling the studio uses on every engagement, open-sourced because th
 
 **REVEALUI STUDIO L.L.C.** · Tennessee · [founder@revealui.com](mailto:founder@revealui.com)
 
-License posture: 24 of 26 packages are MIT forever. Two Pro packages (`@revealui/ai`, `@revealui/harnesses`) are Fair Source ([FSL-1.1-MIT](https://fsl.software/)) and convert to MIT 2 years after each release.
+License posture: 20 of 26 packages are MIT forever. The 5 Pro packages (`@revealui/ai`, `@revealui/engines`, `@revealui/harnesses`, `@revealui/mcp`, `@revealui/services`) are Fair Source ([FSL-1.1-MIT](https://fsl.software/)) and convert to MIT 2 years after each release.
