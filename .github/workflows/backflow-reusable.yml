@@ -1,0 +1,153 @@
+name: backflow-reusable
+
+# Org-shared REUSABLE backflow workflow. Each repo adds a thin caller
+# (.github/workflows/backflow-main-into-test.yml) that triggers on push:main and
+# `uses:` this workflow with `secrets: inherit`. When main moves, this opens or
+# updates a "backflow main into test" PR if test is behind main. Companion to
+# promotion-gate.yml — that REJECTS stale promotions; this PROACTIVELY heals them.
+#
+# Auth: GitHub App installation token (actions/create-github-app-token) instead of
+# GITHUB_TOKEN, because (1) the org blocks GITHUB_TOKEN from creating PRs and
+# (2) App-token PRs DO trigger CI (no anti-loop guard) so the backflow PR runs the
+# gate normally. Creds come from the caller's BACKFLOW_APP_ID /
+# BACKFLOW_APP_PRIVATE_KEY secrets (pass `secrets: inherit`); the revfleet-backflow
+# App must be installed on the caller repo with Contents + Pull requests (r/w).
+#
+# Caller template:
+#   on: { push: { branches: [main] } }
+#   jobs:
+#     backflow:
+#       uses: RevealUIStudio/.github/.github/workflows/backflow-reusable.yml@main
+#       secrets: inherit
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read # all writes go through the App token, not GITHUB_TOKEN
+
+jobs:
+  backflow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.BACKFLOW_APP_ID }}
+          private-key: ${{ secrets.BACKFLOW_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (resolved 2026-05-19)
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Check if test needs backflow
+        id: check
+        run: |
+          if ! git fetch origin test 2>/dev/null; then
+            echo "::warning::No 'test' branch on origin — skipping backflow"
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git merge-base --is-ancestor origin/main origin/test; then
+            echo "test already contains main — no backflow needed ✓"
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            behind=$(git rev-list --count origin/test..origin/main)
+            echo "test is $behind commit(s) behind main"
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "behind=$behind" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure git identity
+        if: steps.check.outputs.needed == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Attempt backflow merge
+        if: steps.check.outputs.needed == 'true'
+        id: merge
+        run: |
+          git checkout -B chore/backflow-main-into-test origin/test
+
+          missing=$(git log --oneline origin/test..origin/main | head -20)
+          {
+            echo "Merge main into test"
+            echo ""
+            echo "Auto-opened by the shared backflow-reusable workflow after main"
+            echo "moved forward. Merge commit (no squash) per"
+            echo "feedback_merge_main_into_test_must_use_merge_commit so main's"
+            echo "parentage is preserved and the next promotion-gate check passes."
+            echo ""
+            echo "Missing commits backflowed:"
+            echo "$missing"
+          } > /tmp/merge-msg.txt
+
+          if git merge --no-ff -F /tmp/merge-msg.txt origin/main; then
+            git push origin chore/backflow-main-into-test --force-with-lease
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error title=Backflow merge conflict::Auto-backflow hit content conflicts. Resolve manually: git checkout test && git fetch origin && git merge --no-ff origin/main && resolve && git push origin test"
+            exit 1
+          fi
+
+      - name: Open or update backflow PR
+        if: steps.check.outputs.needed == 'true' && steps.merge.outputs.merged == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BEHIND: ${{ steps.check.outputs.behind }}
+          REPO: ${{ github.repository }}
+        run: |
+          title="chore(test): backflow main into test ($BEHIND commit(s) behind)"
+          {
+            echo "## Summary"
+            echo ""
+            echo "Auto-opened by the shared backflow-reusable workflow because \`main\` moved forward and \`test\` is $BEHIND commit(s) behind."
+            echo ""
+            echo "## Why this exists"
+            echo ""
+            echo "Without backflow, the next \`test\` → \`main\` promotion fails the \`promotion-gate\` check (it requires test to contain all of main). This PR catches \`test\` up so the next promotion lands cleanly."
+            echo ""
+            echo "## Merge instructions"
+            echo ""
+            echo "**Merge as a merge commit (NOT squash) per \`feedback_merge_main_into_test_must_use_merge_commit\`:**"
+            echo ""
+            echo '```'
+            echo "gh pr merge <PR#> --merge --delete-branch --repo $REPO"
+            echo '```'
+            echo ""
+            echo "Squash strips \`main\`'s parentage — \`promotion-gate\` will re-flag the same condition on the next push to main, and another backflow PR will auto-open."
+            echo ""
+            echo "_Opened via a GitHub App token, so CI runs normally on this PR. Per \`feedback_no_auto_merge\`: manual merge only — no \`--auto\`._"
+          } > /tmp/pr-body.md
+
+          # Idempotent open-or-update: re-checks for an existing backflow PR on each
+          # call, so a retry after a failed attempt edits rather than double-creates.
+          open_or_update_pr() {
+            local existing
+            existing=$(gh pr list --repo "$REPO" --base test --head chore/backflow-main-into-test --json number --jq '.[0].number // empty') || return 1
+            if [ -n "$existing" ]; then
+              gh pr edit "$existing" --repo "$REPO" --title "$title" --body-file /tmp/pr-body.md || return 1
+              echo "Updated existing backflow PR #$existing"
+            else
+              gh pr create --repo "$REPO" --base test --head chore/backflow-main-into-test --title "$title" --body-file /tmp/pr-body.md || return 1
+              echo "Created new backflow PR"
+            fi
+          }
+
+          # Retry with backoff (defense-in-depth: the App token avoids the PR-creation
+          # permission gate, but a transient API 5xx can still blip). A persistent
+          # failure still exits non-zero so unhealed staleness stays visible (red).
+          attempt=0
+          max=4
+          until open_or_update_pr; do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -ge "$max" ]; then
+              echo "::error title=Backflow PR open failed::Could not open/update the backflow PR after $max attempts. The chore/backflow-main-into-test branch is already pushed (it carries the main→test merge), so recovery is just opening the PR manually."
+              exit 1
+            fi
+            echo "::warning::backflow PR open attempt $attempt/$max failed; retrying in $((attempt * 15))s..."
+            sleep "$((attempt * 15))"
+          done
