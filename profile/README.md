@@ -6,7 +6,7 @@ Three things, in three places.
 
 ## The Platform · [revealui.com](https://revealui.com)
 
-[**RevealUI**](https://github.com/RevealUIStudio/revealui) is an open-source TypeScript runtime that ships five business primitives: **Users** (auth, RBAC/ABAC, agent identity), **Content** (admin engine, collections, rich text), **Products** (catalog, pricing, license keys), **Payments** (Stripe live-mode billing with webhook reconciliation), and **Intelligence** (agent orchestration, open-model inference, RAG, MCP servers, tamper-evident audit chain). 26 packages on npm. Self-host on any infra. Install with `npx create-revealui@latest my-app`. Docs at [docs.revealui.com](https://docs.revealui.com).
+[**RevealUI**](https://github.com/RevealUIStudio/revealui) is an open-source TypeScript runtime that ships five business primitives: **Users** (auth, RBAC/ABAC, agent identity), **Content** (admin engine, collections, rich text), **Products** (catalog, pricing, license keys), **Payments** (Stripe billing with webhook reconciliation), and **Intelligence** (agent orchestration, open-model inference, RAG, MCP servers, tamper-evident audit chain). 26 composable packages. Self-host on any infra. Install with `npx create-revealui@latest my-app`. Docs at [docs.revealui.com](https://docs.revealui.com).
 
 Adjacent in the Platform bucket: [**RevDev**](https://github.com/RevealUIStudio/revdev) — native developer tools (Studio Tauri desktop + Console Go TUI + Harness daemon). Buildable, pre-1.0.
 
