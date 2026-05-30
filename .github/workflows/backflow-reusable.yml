@@ -13,6 +13,21 @@ name: backflow-reusable
 # BACKFLOW_APP_PRIVATE_KEY secrets (pass `secrets: inherit`); the revfleet-backflow
 # App must be installed on the caller repo with Contents + Pull requests (r/w).
 #
+# Hardening (audit of the 2026-05-20..05-23 PR-create failures, where gh fell back
+# to the org-blocked GITHUB_TOKEN). All present-day runs are healthy; these guards
+# stop known latent failure modes from biting:
+#   - empty-GH_TOKEN guard: refuse to run the PR step on an empty App token instead
+#     of letting gh silently fall back to the org-blocked GITHUB_TOKEN (the exact
+#     historical failure — the single regression that would re-arm it).
+#   - state-aware PR lookup: a CLOSED-not-merged PR on the shared backflow head no
+#     longer wedges `gh pr create` (422 "a pull request already exists") — reopen it.
+#   - pinned --force-with-lease + push retry: a concurrent write to the shared
+#     branch fails the push (then retries) rather than being silently clobbered.
+#   - fetch failures fail RED, distinguished from a genuinely-absent test branch,
+#     instead of a false "no backflow needed" green no-op.
+#   - `set -euo pipefail` + an `if`-guarded merge/push so `merged=true` can only be
+#     emitted after a confirmed push.
+#
 # Caller template:
 #   on: { push: { branches: [main] } }
 #   jobs:
@@ -44,10 +59,34 @@ jobs:
       - name: Check if test needs backflow
         id: check
         run: |
-          if ! git fetch origin test 2>/dev/null; then
+          set -euo pipefail
+
+          # Distinguish a genuinely-absent `test` branch (legitimate no-op) from a
+          # transient fetch/network error (must surface RED, not a silent green
+          # "no backflow needed"). `git ls-remote --exit-code` returns 2 when the
+          # ref is absent and a different non-zero on real errors.
+          exists=0
+          git ls-remote --exit-code origin test >/dev/null 2>&1 || exists=$?
+          if [ "$exists" -eq 2 ]; then
             echo "::warning::No 'test' branch on origin — skipping backflow"
             echo "needed=false" >> "$GITHUB_OUTPUT"
             exit 0
+          elif [ "$exists" -ne 0 ]; then
+            echo "::error title=Backflow ls-remote failed::Could not query origin for 'test' (rc=$exists). Infra error — failing loudly instead of reporting a false 'no backflow needed'."
+            exit 1
+          fi
+
+          # `test` exists, so a fetch failure here is infra, not absence — retry,
+          # then fail loudly rather than swallowing it as a green no-op.
+          fetched=false
+          for attempt in 1 2 3; do
+            if git fetch origin test 2>/dev/null; then fetched=true; break; fi
+            echo "::warning::git fetch origin test failed (attempt $attempt/3); retrying..."
+            sleep "$((attempt * 5))"
+          done
+          if [ "$fetched" != true ]; then
+            echo "::error title=Backflow fetch failed::Could not fetch origin/test after 3 attempts."
+            exit 1
           fi
 
           if git merge-base --is-ancestor origin/main origin/test; then
@@ -70,9 +109,11 @@ jobs:
         if: steps.check.outputs.needed == 'true'
         id: merge
         run: |
+          set -euo pipefail
           git checkout -B chore/backflow-main-into-test origin/test
 
-          missing=$(git log --oneline origin/test..origin/main | head -20)
+          # `git log -20` (not `| head -20`) avoids a SIGPIPE under `pipefail`.
+          missing=$(git log -20 --oneline origin/test..origin/main)
           {
             echo "Merge main into test"
             echo ""
@@ -85,13 +126,34 @@ jobs:
             echo "$missing"
           } > /tmp/merge-msg.txt
 
-          if git merge --no-ff -F /tmp/merge-msg.txt origin/main; then
-            git push origin chore/backflow-main-into-test --force-with-lease
-            echo "merged=true" >> "$GITHUB_OUTPUT"
-          else
+          if ! git merge --no-ff -F /tmp/merge-msg.txt origin/main; then
             echo "::error title=Backflow merge conflict::Auto-backflow hit content conflicts. Resolve manually: git checkout test && git fetch origin && git merge --no-ff origin/main && resolve && git push origin test"
             exit 1
           fi
+
+          # Push with a pinned lease so a concurrent write to the shared backflow
+          # branch fails the push (and retries) rather than being silently clobbered.
+          # Re-fetch the branch each attempt to refresh the lease baseline; lease
+          # against the observed remote tip, or plain-create when the branch is
+          # absent. `if git push` keeps a rejected push from aborting under `set -e`,
+          # so the loop can retry. `merged=true` is emitted only after a confirmed push.
+          pushed=false
+          for attempt in 1 2 3; do
+            git fetch origin chore/backflow-main-into-test 2>/dev/null || true
+            expect=$(git rev-parse --verify --quiet origin/chore/backflow-main-into-test || echo "")
+            if [ -n "$expect" ]; then
+              if git push origin chore/backflow-main-into-test --force-with-lease=chore/backflow-main-into-test:"$expect"; then pushed=true; break; fi
+            else
+              if git push origin chore/backflow-main-into-test; then pushed=true; break; fi
+            fi
+            echo "::warning::backflow branch push rejected (attempt $attempt/3) — refreshing lease baseline and retrying..."
+            sleep "$((attempt * 5))"
+          done
+          if [ "$pushed" != true ]; then
+            echo "::error title=Backflow push failed::Could not push chore/backflow-main-into-test after 3 attempts (lease conflict or transient error)."
+            exit 1
+          fi
+          echo "merged=true" >> "$GITHUB_OUTPUT"
 
       - name: Open or update backflow PR
         if: steps.check.outputs.needed == 'true' && steps.merge.outputs.merged == 'true'
@@ -100,6 +162,15 @@ jobs:
           BEHIND: ${{ steps.check.outputs.behind }}
           REPO: ${{ github.repository }}
         run: |
+          # Refuse to proceed on an empty App token. Without this, gh silently falls
+          # back to the runtime GITHUB_TOKEN, which the org blocks from creating PRs —
+          # the exact 2026-05-20..05-23 failure. Failing loudly here means a future
+          # edit that drops/renames the GH_TOKEN binding can't silently regress.
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error title=Backflow App token empty::GH_TOKEN (App installation token) is empty — refusing to fall back to the org-blocked GITHUB_TOKEN. Check the create-github-app-token step id and BACKFLOW_APP_ID / BACKFLOW_APP_PRIVATE_KEY."
+            exit 1
+          fi
+
           title="chore(test): backflow main into test ($BEHIND commit(s) behind)"
           {
             echo "## Summary"
@@ -123,23 +194,40 @@ jobs:
             echo "_Opened via a GitHub App token, so CI runs normally on this PR. Per \`feedback_no_auto_merge\`: manual merge only — no \`--auto\`._"
           } > /tmp/pr-body.md
 
-          # Idempotent open-or-update: re-checks for an existing backflow PR on each
-          # call, so a retry after a failed attempt edits rather than double-creates.
+          # Idempotent open-or-update, robust to a CLOSED-not-merged PR on the shared
+          # backflow head (which would otherwise wedge `gh pr create` permanently with
+          # a 422 "a pull request already exists"). Order: update an OPEN PR if one
+          # exists (the retry case); else create; if create reports "already exists",
+          # a closed PR is blocking the head — reopen + update it instead of failing.
           open_or_update_pr() {
-            local existing
-            existing=$(gh pr list --repo "$REPO" --base test --head chore/backflow-main-into-test --json number --jq '.[0].number // empty') || return 1
+            local existing closed
+            existing=$(gh pr list --repo "$REPO" --base test --head chore/backflow-main-into-test --state open --json number --jq '.[0].number // empty') || return 1
             if [ -n "$existing" ]; then
               gh pr edit "$existing" --repo "$REPO" --title "$title" --body-file /tmp/pr-body.md || return 1
-              echo "Updated existing backflow PR #$existing"
-            else
-              gh pr create --repo "$REPO" --base test --head chore/backflow-main-into-test --title "$title" --body-file /tmp/pr-body.md || return 1
-              echo "Created new backflow PR"
+              echo "Updated existing open backflow PR #$existing"
+              return 0
             fi
+            if gh pr create --repo "$REPO" --base test --head chore/backflow-main-into-test --title "$title" --body-file /tmp/pr-body.md 2>/tmp/pr-create.err; then
+              echo "Created new backflow PR"
+              return 0
+            fi
+            if grep -qi "already exists" /tmp/pr-create.err; then
+              closed=$(gh pr list --repo "$REPO" --base test --head chore/backflow-main-into-test --state closed --json number,state --jq '[.[] | select(.state == "CLOSED")][0].number // empty') || return 1
+              if [ -n "$closed" ]; then
+                gh pr reopen "$closed" --repo "$REPO" || return 1
+                gh pr edit "$closed" --repo "$REPO" --title "$title" --body-file /tmp/pr-body.md || return 1
+                echo "Reopened + updated previously-closed backflow PR #$closed"
+                return 0
+              fi
+            fi
+            cat /tmp/pr-create.err >&2
+            return 1
           }
 
-          # Retry with backoff (defense-in-depth: the App token avoids the PR-creation
-          # permission gate, but a transient API 5xx can still blip). A persistent
-          # failure still exits non-zero so unhealed staleness stays visible (red).
+          # Retry with backoff for TRANSIENT failures (5xx / rate-limit / network).
+          # A persistent failure still exits non-zero so unhealed staleness stays
+          # visible (red). The deterministic blockers above (empty token, closed-PR
+          # wedge) are handled before/inside the function, not by burning retries.
           attempt=0
           max=4
           until open_or_update_pr; do
