@@ -41,6 +41,19 @@ name: backflow-reusable
 
 on:
   workflow_call:
+    # Declared so callers can scope to ONLY these two secrets
+    #   secrets:
+    #     BACKFLOW_APP_ID: ${{ secrets.BACKFLOW_APP_ID }}
+    #     BACKFLOW_APP_PRIVATE_KEY: ${{ secrets.BACKFLOW_APP_PRIVATE_KEY }}
+    # instead of `secrets: inherit` (which forwards every caller secret).
+    # `secrets: inherit` remains valid and continues to satisfy these.
+    secrets:
+      BACKFLOW_APP_ID:
+        description: App ID for the revfleet-backflow GitHub App.
+        required: true
+      BACKFLOW_APP_PRIVATE_KEY:
+        description: Private key (PEM) for the revfleet-backflow GitHub App.
+        required: true
 
 permissions:
   contents: read # all writes go through the App token, not GITHUB_TOKEN
