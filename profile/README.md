@@ -6,7 +6,7 @@ Three things, in three places.
 
 ## The Platform · [revealui.com](https://revealui.com)
 
-[**RevealUI**](https://github.com/RevealUIStudio/revealui) is an open-source TypeScript runtime that ships five business primitives: **Users** (auth, RBAC/ABAC, agent identity), **Content** (admin engine, collections, rich text), **Products** (catalog, pricing, license keys), **Payments** (Stripe billing with webhook reconciliation), and **Intelligence** (agent orchestration, open-model inference, RAG, MCP servers, tamper-evident audit chain). 26 composable packages. Self-host on any infra. Install with `npx create-revealui@latest my-app`. Docs at [docs.revealui.com](https://docs.revealui.com).
+[**RevealUI**](https://github.com/RevealUIStudio/revealui) is an open-source TypeScript runtime that ships five business primitives: **Users** (auth, RBAC/ABAC, agent identity), **Content** (admin engine, collections, rich text), **Products** (catalog, pricing, license keys), **Payments** (Stripe billing with webhook reconciliation), and **Intelligence** (agent orchestration, open-model inference, RAG, MCP servers, tamper-evident audit chain). 27 composable packages. Self-host on any infra. Install with `npx create-revealui@latest my-app`. Docs at [docs.revealui.com](https://docs.revealui.com).
 
 Adjacent in the Platform bucket: [**RevDev**](https://github.com/RevealUIStudio/revdev) — native developer tools (Studio Tauri desktop + Console Go TUI + Harness daemon). Buildable, pre-1.0.
 
@@ -35,4 +35,4 @@ Public-good tooling the studio uses on every engagement, open-sourced because th
 
 **REVEALUI STUDIO L.L.C.** · Tennessee · [founder@revealui.com](mailto:founder@revealui.com)
 
-License posture: 20 of 26 packages are MIT forever. The 5 Pro packages (`@revealui/ai`, `@revealui/engines`, `@revealui/harnesses`, `@revealui/mcp`, `@revealui/services`) are Fair Source ([FSL-1.1-MIT](https://fsl.software/)) and convert to MIT 2 years after each release.
+License posture: 21 of 27 packages are MIT forever. The 5 Pro packages (`@revealui/ai`, `@revealui/engines`, `@revealui/harnesses`, `@revealui/mcp`, `@revealui/services`) are Fair Source ([FSL-1.1-MIT](https://fsl.software/)) and convert to MIT 2 years after each release.
