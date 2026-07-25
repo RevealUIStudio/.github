@@ -280,3 +280,22 @@ jobs:
             echo "::warning::backflow PR open attempt $attempt/$max failed; retrying in $((attempt * 15))s..."
             sleep "$((attempt * 15))"
           done
+
+          # Apply the merge-method acknowledgment label. Repos that run the
+          # backflow-merge-method-guard (revealui) red-X any backflow-shaped PR
+          # without `backflow:merge-commit` — so without this, every backflow the
+          # bot opens arrives pre-deadlocked and a human must label it each cycle
+          # (revealui#2153/#2159). Best-effort: labeling failure warns but never
+          # turns a successfully-opened backflow PR red, because unguarded repos
+          # don't need the label at all.
+          prnum=$(gh pr list --repo "$REPO" --base test --head chore/backflow-main-into-test --state open --json number --jq '.[0].number // empty' || true)
+          if [ -n "$prnum" ]; then
+            gh label create "backflow:merge-commit" --repo "$REPO" --color 0e8a16 \
+              --description "Backflow PR acknowledged: merge with a merge commit, never squash" \
+              2>/dev/null || true
+            if gh pr edit "$prnum" --repo "$REPO" --add-label "backflow:merge-commit" 2>/tmp/label-err.txt; then
+              echo "Applied backflow:merge-commit to backflow PR #$prnum"
+            else
+              echo "::warning title=Backflow label not applied::Could not add backflow:merge-commit to PR #$prnum ($(cat /tmp/label-err.txt)). On guard-enforcing repos, apply it manually before merging."
+            fi
+          fi
