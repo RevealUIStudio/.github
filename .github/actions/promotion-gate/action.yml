@@ -62,7 +62,11 @@ runs:
         BASE_REF: ${{ inputs.base_ref }}
       run: |
         set -euo pipefail
-        git fetch origin "$BASE_REF" --depth=200
+        # checkout above runs with fetch-depth: 0, which already fetched all
+        # refs (including origin/$BASE_REF) WITH credentials. Re-fetching here
+        # anonymously breaks on PRIVATE repos (persist-credentials: false →
+        # "could not read Username"), so only fetch when the ref is missing.
+        git rev-parse --verify "origin/$BASE_REF" >/dev/null 2>&1 || git fetch origin "$BASE_REF" --depth=200
         base_sha=$(git rev-parse "origin/$BASE_REF")
 
         if git merge-base --is-ancestor "$base_sha" HEAD; then
