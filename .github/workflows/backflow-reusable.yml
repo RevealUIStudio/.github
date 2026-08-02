@@ -1,55 +1,48 @@
 name: backflow-reusable
 
 # Org-shared REUSABLE backflow workflow. Each repo adds a thin caller
-# (.github/workflows/backflow-main-into-test.yml) that triggers on push:main and
-# `uses:` this workflow with `secrets: inherit`. When main moves, this opens or
-# updates a "backflow main into test" PR if test is behind main. Companion to
-# promotion-gate.yml — that REJECTS stale promotions; this PROACTIVELY heals them.
+# (.github/workflows/backflow-main-into-test.yml) that triggers on push to main
+# and/or test and `uses:` this workflow. When test does not contain main as an
+# ancestor, this heals ancestry.
+#
+# ## Durable land path (2026-08-02)
+#
+# PRIMARY: GitHub merges API with base=test head=main — a real two-parent merge
+# commit, signed server-side (RS-3). No human PR merge button. Squash is
+# impossible on this path (there is no PR merge for a human to mis-click).
+#
+# Proven 2026-08-02 after #2385 and #2388 were squash-merged (1 parent each),
+# leaving test 1 commit behind main (f9157f0b4) and blocking promotion-gate.
+# Soft dual (label + instructions) cannot stop the UI default of Squash.
+#
+# FALLBACK: if direct land is blocked (permissions / rare ruleset edge), open
+# the chore/backflow-main-into-test PR and enable auto-merge with mergeMethod
+# MERGE only (never squash). Humans must not squash; auto-merge removes the
+# click. If auto-merge cannot be enabled, the PR body still requires --merge.
 #
 # Auth: GitHub App installation token (actions/create-github-app-token) instead of
-# GITHUB_TOKEN, because (1) the org blocks GITHUB_TOKEN from creating PRs and
-# (2) App-token PRs DO trigger CI (no anti-loop guard) so the backflow PR runs the
-# gate normally. Creds come from the caller's BACKFLOW_APP_ID /
-# BACKFLOW_APP_PRIVATE_KEY secrets (pass `secrets: inherit`); the revfleet-backflow
-# App must be installed on the caller repo with Contents + Pull requests (r/w).
+# GITHUB_TOKEN — org blocks GITHUB_TOKEN from creating PRs; App has Contents +
+# Pull requests r/w. Creds: caller BACKFLOW_APP_ID / BACKFLOW_APP_PRIVATE_KEY.
 #
-# Hardening (audit of the 2026-05-20..05-23 PR-create failures, where gh fell back
-# to the org-blocked GITHUB_TOKEN). All present-day runs are healthy; these guards
-# stop known latent failure modes from biting:
-#   - empty-GH_TOKEN guard: refuse to run the PR step on an empty App token instead
-#     of letting gh silently fall back to the org-blocked GITHUB_TOKEN (the exact
-#     historical failure — the single regression that would re-arm it).
-#   - state-aware PR lookup: a CLOSED-not-merged PR on the shared backflow head no
-#     longer wedges `gh pr create` (422 "a pull request already exists") — reopen it.
-#   - SIGNED merge via the GitHub merges API: the merge commit is created
-#     server-side (verified=true), so the require-signed-commits ruleset (RS-3) on
-#     `test` does not reject it at the backflow PR merge (a local `git merge` commit
-#     is unsigned). The server-side merge is atomic, so the disposable backflow
-#     branch is just force-reset to test's tip each run (no push-lease loop needed).
-#   - fetch failures fail RED, distinguished from a genuinely-absent test branch,
-#     instead of a false "no backflow needed" green no-op.
-#   - `set -euo pipefail` + an `if`-guarded API merge so `merged=true` can only be
-#     emitted after a confirmed merge.
-#   - fail fast (no retry) on a deterministic PR-auth block; retries are reserved
-#     for transient (5xx / rate-limit / network) errors.
-#   - re-fetch + re-target the LATEST main before merging (exit cleanly if a
-#     concurrent backflow already healed test), keeping the PR's behind-count true.
+# Hardening retained:
+#   - empty-GH_TOKEN guard on any PR step
+#   - state-aware PR lookup (CLOSED-not-merged reopen)
+#   - signed merges API (not local git merge)
+#   - fetch failures fail RED
+#   - set -euo pipefail; merged/landed only after confirmed API success
+#   - re-fetch latest main before land; no-op if concurrent heal already won
 #
 # Caller template:
-#   on: { push: { branches: [main] } }
+#   on: { push: { branches: [main, test] } }
 #   jobs:
 #     backflow:
-#       uses: RevealUIStudio/.github/.github/workflows/backflow-reusable.yml@main
-#       secrets: inherit
+#       uses: RevealUIStudio/.github/.github/workflows/backflow-reusable.yml@<sha>
+#       secrets:
+#         BACKFLOW_APP_ID: ${{ secrets.BACKFLOW_APP_ID }}
+#         BACKFLOW_APP_PRIVATE_KEY: ${{ secrets.BACKFLOW_APP_PRIVATE_KEY }}
 
 on:
   workflow_call:
-    # Declared so callers can scope to ONLY these two secrets
-    #   secrets:
-    #     BACKFLOW_APP_ID: ${{ secrets.BACKFLOW_APP_ID }}
-    #     BACKFLOW_APP_PRIVATE_KEY: ${{ secrets.BACKFLOW_APP_PRIVATE_KEY }}
-    # instead of `secrets: inherit` (which forwards every caller secret).
-    # `secrets: inherit` remains valid and continues to satisfy these.
     secrets:
       BACKFLOW_APP_ID:
         description: App ID for the revfleet-backflow GitHub App.
@@ -81,10 +74,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Distinguish a genuinely-absent `test` branch (legitimate no-op) from a
-          # transient fetch/network error (must surface RED, not a silent green
-          # "no backflow needed"). `git ls-remote --exit-code` returns 2 when the
-          # ref is absent and a different non-zero on real errors.
           exists=0
           git ls-remote --exit-code origin test >/dev/null 2>&1 || exists=$?
           if [ "$exists" -eq 2 ]; then
@@ -96,8 +85,6 @@ jobs:
             exit 1
           fi
 
-          # `test` exists, so a fetch failure here is infra, not absence — retry,
-          # then fail loudly rather than swallowing it as a green no-op.
           fetched=false
           for attempt in 1 2 3; do
             if git fetch origin test 2>/dev/null; then fetched=true; break; fi
@@ -119,128 +106,156 @@ jobs:
             echo "behind=$behind" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Attempt backflow merge (signed via merges API)
+      - name: Land main into test (merges API, two-parent)
         if: steps.check.outputs.needed == 'true'
-        id: merge
+        id: land
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
-          # Re-fetch so we backflow the LATEST main — main may have advanced since the
-          # check step, which would otherwise leave the merged PR still short of "test
-          # contains ALL of main" until the next run. This shrinks that window and keeps
-          # the `behind` count accurate. If a concurrent backflow already healed test,
-          # exit cleanly with merged=false so the PR step is skipped.
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error title=Backflow App token empty::GH_TOKEN is empty — refusing to proceed."
+            exit 1
+          fi
+
           git fetch origin main test
           if git merge-base --is-ancestor origin/main origin/test; then
-            echo "::notice::test already contains main (healed since the check step) — nothing to backflow."
-            echo "merged=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::test already contains main (healed since check) — nothing to land."
+            echo "landed=true" >> "$GITHUB_OUTPUT"
+            echo "fallback_pr=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           behind=$(git rev-list --count origin/test..origin/main)
           echo "behind=$behind" >> "$GITHUB_OUTPUT"
 
-          # `git log -20` (not `| head -20`) avoids a SIGPIPE under `pipefail`.
           missing=$(git log -20 --oneline origin/test..origin/main)
           {
             echo "Merge main into test"
             echo ""
-            echo "Auto-opened by the shared backflow-reusable workflow after main"
-            echo "moved forward. Merge commit (no squash) per"
-            echo "feedback_merge_main_into_test_must_use_merge_commit so main's"
-            echo "parentage is preserved and the next promotion-gate check passes."
+            echo "Auto-landed by the shared backflow-reusable workflow after main"
+            echo "moved forward (or after a squash-merged backflow stripped parentage)."
             echo ""
-            echo "Created via the GitHub merges API so the merge commit is SIGNED"
-            echo "(verified) — the require-signed-commits ruleset (RS-3) blocks an"
-            echo "unsigned local git-merge commit from being merged into test."
+            echo "Two-parent merge via GitHub merges API (NOT squash) so main's"
+            echo "parentage is preserved and promotion-gate passes. Signed"
+            echo "server-side for require-signed-commits (RS-3)."
             echo ""
             echo "Missing commits backflowed:"
             echo "$missing"
           } > /tmp/merge-msg.txt
 
-          # Reset the disposable backflow branch to test's current tip, then create
-          # the merge commit SERVER-SIDE via the merges API. GitHub SIGNS that merge
-          # commit (verified=true); it is a real two-parent (--no-ff-equivalent)
-          # merge, so main's parentage is preserved for promotion-gate. A local
-          # `git merge` + push would be an UNSIGNED commit that RS-3 rejects at the
-          # PR merge into test. `chore/**` is not a signature-protected ref, so this
-          # ref reset is unaffected by RS-3; the server-side merge is atomic, so no
-          # push-lease loop is needed.
+          # PRIMARY: land directly on test. No human PR merge button → no squash.
+          body="$(jq -n --rawfile msg /tmp/merge-msg.txt \
+            '{base:"test", head:"main", commit_message:$msg}')"
+          if echo "$body" | gh api -X POST "repos/$REPO/merges" --input - \
+               >/tmp/land-resp.json 2>/tmp/land-err.txt; then
+            sha=$(jq -r '.sha // empty' /tmp/land-resp.json)
+            echo "landed=true" >> "$GITHUB_OUTPUT"
+            echo "fallback_pr=false" >> "$GITHUB_OUTPUT"
+            echo "Signed two-parent land on test: ${sha:-already up to date}"
+            # Close any open manual backflow PR (obsolete after direct land).
+            open_pr=$(gh pr list --repo "$REPO" --base test --head chore/backflow-main-into-test \
+              --state open --json number --jq '.[0].number // empty' || true)
+            if [ -n "$open_pr" ]; then
+              gh pr close "$open_pr" --repo "$REPO" --comment \
+                "Closed: ancestry auto-landed on \`test\` via merges API (\`${sha:-\$tip}\`). No human merge required." \
+                || echo "::warning::Could not close obsolete backflow PR #$open_pr"
+            fi
+            exit 0
+          fi
+
+          err=$(cat /tmp/land-err.txt)
+          if echo "$err" | grep -qi 'conflict'; then
+            echo "::error title=Backflow merge conflict::Direct land hit content conflicts. Resolve manually: git fetch origin && git checkout test && git merge --no-ff origin/main && resolve && git push origin test"
+            exit 1
+          fi
+
+          # FALLBACK: permissions/ruleset blocked direct land → PR + auto-merge MERGE.
+          echo "::warning title=Direct land blocked::merges API base=test failed ($err). Falling back to PR + auto-merge (merge method only)."
+          echo "landed=false" >> "$GITHUB_OUTPUT"
+          echo "fallback_pr=true" >> "$GITHUB_OUTPUT"
+
+      - name: Fallback — chore branch + PR + auto-merge (merge only)
+        if: steps.check.outputs.needed == 'true' && steps.land.outputs.fallback_pr == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BEHIND: ${{ steps.land.outputs.behind || steps.check.outputs.behind }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error title=Backflow App token empty::GH_TOKEN is empty — refusing PR fallback."
+            exit 1
+          fi
+
+          git fetch origin main test
+          if git merge-base --is-ancestor origin/main origin/test; then
+            echo "test already contains main — skip fallback PR"
+            exit 0
+          fi
+
+          missing=$(git log -20 --oneline origin/test..origin/main)
+          {
+            echo "Merge main into test"
+            echo ""
+            echo "Fallback backflow: direct merges API land was blocked; this PR"
+            echo "carries a two-parent merge of main into test tip."
+            echo ""
+            echo "Auto-merge is enabled with mergeMethod=MERGE only."
+            echo "Do NOT squash-merge — squash strips main parentage."
+            echo ""
+            echo "Missing commits:"
+            echo "$missing"
+          } > /tmp/merge-msg.txt
+
           git push origin --force \
             "$(git rev-parse origin/test)":refs/heads/chore/backflow-main-into-test
 
           body="$(jq -n --rawfile msg /tmp/merge-msg.txt \
             '{base:"chore/backflow-main-into-test", head:"main", commit_message:$msg}')"
-          if echo "$body" | gh api -X POST "repos/$REPO/merges" --input - \
+          if ! echo "$body" | gh api -X POST "repos/$REPO/merges" --input - \
                >/tmp/merge-resp.json 2>/tmp/merge-err.txt; then
-            echo "merged=true" >> "$GITHUB_OUTPUT"
-            echo "Signed merge commit: $(jq -r '.sha // "(already up to date)"' /tmp/merge-resp.json)"
-          else
             if grep -qi 'conflict' /tmp/merge-err.txt; then
-              echo "::error title=Backflow merge conflict::Auto-backflow hit content conflicts. Resolve manually: git checkout test && git fetch origin && git merge --no-ff origin/main && resolve && git push origin test"
+              echo "::error title=Backflow merge conflict::Fallback branch merge hit conflicts. Resolve manually on test."
             else
               echo "::error title=Backflow merge failed::merges API error: $(cat /tmp/merge-err.txt)"
             fi
             exit 1
           fi
-
-      - name: Open or update backflow PR
-        if: steps.check.outputs.needed == 'true' && steps.merge.outputs.merged == 'true'
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          # Prefer the merge step's recomputed count (post re-fetch) so the PR title
-          # is accurate even if main advanced after the check step; fall back to check.
-          BEHIND: ${{ steps.merge.outputs.behind || steps.check.outputs.behind }}
-          REPO: ${{ github.repository }}
-        run: |
-          # Refuse to proceed on an empty App token. Without this, gh silently falls
-          # back to the runtime GITHUB_TOKEN, which the org blocks from creating PRs —
-          # the exact 2026-05-20..05-23 failure. Failing loudly here means a future
-          # edit that drops/renames the GH_TOKEN binding can't silently regress.
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error title=Backflow App token empty::GH_TOKEN (App installation token) is empty — refusing to fall back to the org-blocked GITHUB_TOKEN. Check the create-github-app-token step id and BACKFLOW_APP_ID / BACKFLOW_APP_PRIVATE_KEY."
-            exit 1
-          fi
+          echo "Signed merge on chore branch: $(jq -r '.sha // "(up to date)"' /tmp/merge-resp.json)"
 
           title="chore(test): backflow main into test ($BEHIND commit(s) behind)"
           {
             echo "## Summary"
             echo ""
-            echo "Auto-opened by the shared backflow-reusable workflow because \`main\` moved forward and \`test\` is $BEHIND commit(s) behind."
+            echo "Fallback backflow PR: direct land onto \`test\` was blocked; this PR must merge with a **merge commit** only."
             echo ""
-            echo "## Why this exists"
+            echo "## Auto-merge"
             echo ""
-            echo "Without backflow, the next \`test\` → \`main\` promotion fails the \`promotion-gate\` check (it requires test to contain all of main). This PR catches \`test\` up so the next promotion lands cleanly."
+            echo "This workflow enables **auto-merge with merge method MERGE** when checks allow. Do not squash."
             echo ""
-            echo "## Merge instructions"
-            echo ""
-            echo "**Merge as a merge commit (NOT squash) per \`feedback_merge_main_into_test_must_use_merge_commit\`:**"
+            echo "Manual override:"
             echo ""
             echo '```'
-            echo "gh pr merge <PR#> --merge --delete-branch --repo $REPO"
+            echo "gh pr merge <PR#> --merge --repo $REPO"
             echo '```'
             echo ""
-            echo "Squash strips \`main\`'s parentage — \`promotion-gate\` will re-flag the same condition on the next push to main, and another backflow PR will auto-open."
-            echo ""
-            echo "_Opened via a GitHub App token, so CI runs normally on this PR. Per \`feedback_no_auto_merge\`: manual merge only — no \`--auto\`._"
+            echo "Squash strips \`main\` parentage and re-breaks promotion-gate (failure class 2026-08-02 #2385/#2388)."
           } > /tmp/pr-body.md
 
-          # Idempotent open-or-update, robust to a CLOSED-not-merged PR on the shared
-          # backflow head (which would otherwise wedge `gh pr create` permanently with
-          # a 422 "a pull request already exists"). Order: update an OPEN PR if one
-          # exists (the retry case); else create; if create reports "already exists",
-          # a closed PR is blocking the head — reopen + update it instead of failing.
           open_or_update_pr() {
             local existing closed
             existing=$(gh pr list --repo "$REPO" --base test --head chore/backflow-main-into-test --state open --json number --jq '.[0].number // empty') || return 1
             if [ -n "$existing" ]; then
               gh pr edit "$existing" --repo "$REPO" --title "$title" --body-file /tmp/pr-body.md || return 1
               echo "Updated existing open backflow PR #$existing"
+              echo "$existing" > /tmp/backflow-prnum
               return 0
             fi
             if gh pr create --repo "$REPO" --base test --head chore/backflow-main-into-test --title "$title" --body-file /tmp/pr-body.md 2>/tmp/pr-create.err; then
+              gh pr list --repo "$REPO" --base test --head chore/backflow-main-into-test --state open --json number --jq '.[0].number' > /tmp/backflow-prnum
               echo "Created new backflow PR"
               return 0
             fi
@@ -249,15 +264,13 @@ jobs:
               if [ -n "$closed" ]; then
                 gh pr reopen "$closed" --repo "$REPO" || return 1
                 gh pr edit "$closed" --repo "$REPO" --title "$title" --body-file /tmp/pr-body.md || return 1
+                echo "$closed" > /tmp/backflow-prnum
                 echo "Reopened + updated previously-closed backflow PR #$closed"
                 return 0
               fi
             fi
-            # Deterministic auth block (the historical GITHUB_TOKEN/org-toggle failure,
-            # or the App losing 'Pull requests: write'). Retrying 4x just wastes ~90s
-            # and buries the cause — fail fast with a pointed message.
             if grep -qi "not permitted to create or approve" /tmp/pr-create.err; then
-              echo "::error title=Backflow PR auth blocked::gh was refused PR creation ('not permitted to create or approve pull requests') — the App token (GH_TOKEN) is empty/wrong or the revfleet-backflow App lacks 'Pull requests: write'. Not retrying (deterministic)."
+              echo "::error title=Backflow PR auth blocked::App lacks Pull requests: write. Not retrying."
               cat /tmp/pr-create.err >&2
               exit 1
             fi
@@ -265,37 +278,39 @@ jobs:
             return 1
           }
 
-          # Retry with backoff for TRANSIENT failures (5xx / rate-limit / network).
-          # A persistent failure still exits non-zero so unhealed staleness stays
-          # visible (red). The deterministic blockers above (empty token, closed-PR
-          # wedge) are handled before/inside the function, not by burning retries.
           attempt=0
           max=4
           until open_or_update_pr; do
             attempt=$((attempt + 1))
             if [ "$attempt" -ge "$max" ]; then
-              echo "::error title=Backflow PR open failed::Could not open/update the backflow PR after $max attempts. The chore/backflow-main-into-test branch is already pushed (it carries the main→test merge), so recovery is just opening the PR manually."
+              echo "::error title=Backflow PR open failed::Could not open/update fallback PR after $max attempts."
               exit 1
             fi
             echo "::warning::backflow PR open attempt $attempt/$max failed; retrying in $((attempt * 15))s..."
             sleep "$((attempt * 15))"
           done
 
-          # Apply the merge-method acknowledgment label. Repos that run the
-          # backflow-merge-method-guard (revealui) red-X any backflow-shaped PR
-          # without `backflow:merge-commit` — so without this, every backflow the
-          # bot opens arrives pre-deadlocked and a human must label it each cycle
-          # (revealui#2153/#2159). Best-effort: labeling failure warns but never
-          # turns a successfully-opened backflow PR red, because unguarded repos
-          # don't need the label at all.
-          prnum=$(gh pr list --repo "$REPO" --base test --head chore/backflow-main-into-test --state open --json number --jq '.[0].number // empty' || true)
-          if [ -n "$prnum" ]; then
-            gh label create "backflow:merge-commit" --repo "$REPO" --color 0e8a16 \
-              --description "Backflow PR acknowledged: merge with a merge commit, never squash" \
-              2>/dev/null || true
-            if gh pr edit "$prnum" --repo "$REPO" --add-label "backflow:merge-commit" 2>/tmp/label-err.txt; then
-              echo "Applied backflow:merge-commit to backflow PR #$prnum"
-            else
-              echo "::warning title=Backflow label not applied::Could not add backflow:merge-commit to PR #$prnum ($(cat /tmp/label-err.txt)). On guard-enforcing repos, apply it manually before merging."
-            fi
+          prnum=$(cat /tmp/backflow-prnum 2>/dev/null || true)
+          if [ -z "$prnum" ]; then
+            prnum=$(gh pr list --repo "$REPO" --base test --head chore/backflow-main-into-test --state open --json number --jq '.[0].number // empty' || true)
+          fi
+          if [ -z "$prnum" ]; then
+            echo "::error title=Backflow PR number missing::Cannot label or auto-merge."
+            exit 1
+          fi
+
+          gh label create "backflow:merge-commit" --repo "$REPO" --color 0e8a16 \
+            --description "Backflow PR: merge commit only (never squash)" \
+            2>/dev/null || true
+          gh pr edit "$prnum" --repo "$REPO" --add-label "backflow:merge-commit" \
+            2>/tmp/label-err.txt \
+            || echo "::warning::Could not add backflow:merge-commit to #$prnum ($(cat /tmp/label-err.txt))"
+
+          # Enable auto-merge with MERGE only (never squash/rebase).
+          # Requires repo allow_auto_merge=true. Failure is a warning; body still documents --merge.
+          if gh pr merge "$prnum" --repo "$REPO" --merge --auto 2>/tmp/auto-merge.err; then
+            echo "Enabled auto-merge (merge method) on backflow PR #$prnum"
+          else
+            echo "::warning title=Auto-merge not enabled::$(cat /tmp/auto-merge.err). Ensure allow_auto_merge is true, then: gh pr merge $prnum --repo $REPO --merge --auto"
+            echo "Manual: gh pr merge $prnum --repo $REPO --merge"
           fi
