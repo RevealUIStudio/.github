@@ -55,6 +55,38 @@ jobs:
           client_leak_patterns: ${{ secrets.CLIENT_LEAK_PATTERNS }}
 ```
 
+## duplicate-open-pr (composite)
+
+Closes a newly opened PR when its changed-path set overlaps an **older**
+open PR against the same base at Jaccard ≥ 0.8. Check context name is
+exactly `duplicate-open-pr`. Runs via `pull_request_target` on the
+**base** branch so Cursor snowflake heads still hit the lock.
+
+Does not require a GAP id in the branch name. Path overlap is the key.
+A 1-file follow-up against a larger sibling PR stays open (Jaccard stays
+low). Add `not-a-duplicate` to skip.
+
+### Caller (thin)
+
+```yaml
+name: duplicate-open-pr
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  duplicate-open-pr:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: RevealUIStudio/.github/.github/actions/duplicate-open-pr@<pin-sha>
+```
+
+Do not checkout the PR head in this job.
+
 ## issue-leak-scan (reusable workflow)
 
 Scans issue/PR/comment bodies via gitleaks + `.gitleaks.issues.toml` on the

@@ -1,0 +1,32 @@
+name: duplicate-open-pr
+description: >
+  Close a newly opened PR when its changed-path set overlaps an older open
+  PR against the same base at Jaccard >= threshold. Fleet lock so two
+  harnesses cannot both sit open on the same paste.
+
+inputs:
+  github-token:
+    description: Token with pull-requests write (close + comment)
+    required: false
+    default: ${{ github.token }}
+  threshold:
+    description: Jaccard close threshold in (0, 1]
+    required: false
+    default: '0.8'
+
+runs:
+  using: composite
+  steps:
+    - name: Detect overlapping open PR
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        DUPLICATE_PR_THRESHOLD: ${{ inputs.threshold }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const path = require('node:path');
+          const { run } = require(path.join(
+            process.env.GITHUB_ACTION_PATH,
+            'duplicate-open-pr.cjs',
+          ));
+          await run({ github, context, core });

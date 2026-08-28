@@ -1,0 +1,24 @@
+name: duplicate-open-pr
+
+# Thin caller for THIS repo. Other fleet repos pin the composite action SHA.
+# pull_request_target + no head checkout: the gate must run from the base
+# branch so Cursor snowflake branches still hit it.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  duplicate-open-pr:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/duplicate-open-pr
