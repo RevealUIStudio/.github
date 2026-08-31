@@ -4,7 +4,7 @@
 
 # RevealUI Studio
 
-A one-person studio in Maryville, Tennessee. I take paid work on a site, a booking flow, or a written plan. I work in Maryville, Alcoa, and Knoxville, and on a call.
+A one-person studio in Maryville, Tennessee. I take paid work on a site, a booking flow, or an architecture artifact bundle and review. I work in Maryville, Alcoa, and Knoxville, and on a call.
 
 Three things, in three places.
 
@@ -19,8 +19,10 @@ Adjacent in the Platform bucket: [**RevDev**](https://github.com/RevealUIStudio/
 Three public offers. Book a 30-minute intro on Google Calendar. No account. No payment to book. Paid work is invoiced after we agree.
 
 - **Hour** — $300
-- **Written plan** — $3,500
+- **Architecture artifact bundle and review** — $3,500
 - **Launch** — $7,500
+
+The prototype is inside the $3,500 bundle.
 
 [Book a 30-minute intro](https://calendar.google.com/calendar/u/0/appointments/schedules/AcZssZ21UZVcuYp7yO32rZmhyUvZFDJcvles81E9edGNFwSUP8SHEVzGvq0gKgNFo7q04YS5i-12ZE5P)
 
