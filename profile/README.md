@@ -10,9 +10,15 @@ Three things, in three places.
 
 ## The Platform · [revealui.com](https://revealui.com)
 
-[**RevealUI**](https://github.com/RevealUIStudio/revealui) is an open-source TypeScript runtime that ships five business primitives: **Users** (auth, RBAC/ABAC, agent identity), **Content** (admin engine, collections, rich text), **Products** (catalog, pricing, license keys), **Payments** (Stripe billing with webhook reconciliation), and **Intelligence** (agent orchestration, open-model inference, RAG, MCP servers, tamper-evident audit chain). 32 composable packages. Self-host on any infra. Install with `npx create-revealui@latest my-app`. Docs at [docs.revealui.com](https://docs.revealui.com).
+[**RevealUI**](https://github.com/RevealUIStudio/revealui) is an open-source TypeScript runtime that ships five business primitives: **Users** (auth, RBAC/ABAC, agent identity), **Content** (admin engine, collections, rich text), **Products** (catalog, pricing, license keys), **Payments** (Stripe billing with webhook reconciliation), and **Intelligence** (agent orchestration, open-model inference, RAG, MCP servers, tamper-evident audit chain). 32 composable packages. Self-host on any infra. Docs at [docs.revealui.com](https://docs.revealui.com).
 
-Adjacent in the Platform bucket: [**RevDev**](https://github.com/RevealUIStudio/revdev) — native developer tools (Studio Tauri desktop + Console Go TUI + Harness daemon). Buildable, pre-1.0.
+Product line: **Free** · **Pro** $49 · **Max** $299 · **Enterprise** inquire.
+
+Try it:
+
+- `npx create-revealui@latest`
+- GitHub templates: [starter](https://github.com/RevealUIStudio/revealui-template-starter), [basic-blog](https://github.com/RevealUIStudio/revealui-template-basic-blog), [portfolio](https://github.com/RevealUIStudio/revealui-template-portfolio), [e-commerce](https://github.com/RevealUIStudio/revealui-template-e-commerce)
+- [Governed Agent Run on Apify](https://apify.com/revealuistudio/governed-agent-run) — PPE $0.00001, not free
 
 ## Studio · [revealuistudio.com](https://revealuistudio.com)
 
@@ -32,7 +38,6 @@ Public-good tooling the studio uses and open-sources.
 
 - [**RevVault**](https://github.com/RevealUIStudio/revvault) — age-encrypted secret vault. Rust CLI + Tauri desktop app. 100% passage-compatible.
 - [**RevSkills**](https://github.com/RevealUIStudio/revskills) — Claude Code skills used in production at the studio: `next-best-practices`, `tailwind-v4`, `security-hardening`. Install via `npx skills add RevealUIStudio/revskills`. Listed on [agentskills.io](https://agentskills.io).
-- [**RevKit**](https://github.com/RevealUIStudio/revkit) — portable WSL development environment toolkit. Bootstrap scripts + RevStation PowerShell module + boot optimization for WSL2 Ubuntu development.
 
 ---
 
