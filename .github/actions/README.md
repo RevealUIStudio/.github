@@ -51,7 +51,7 @@ jobs:
     steps:
       - uses: RevealUIStudio/.github/.github/actions/check-client-leaks@<pin-sha>
         with:
-          # optional — only if the repo loads patterns from a secret
+          # optional: only if the repo loads patterns from a secret
           client_leak_patterns: ${{ secrets.CLIENT_LEAK_PATTERNS }}
 ```
 
