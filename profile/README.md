@@ -18,15 +18,18 @@ Try it:
 
 - `npx create-revealui@latest`
 - GitHub templates: [starter](https://github.com/RevealUIStudio/revealui-template-starter), [basic-blog](https://github.com/RevealUIStudio/revealui-template-basic-blog), [portfolio](https://github.com/RevealUIStudio/revealui-template-portfolio), [e-commerce](https://github.com/RevealUIStudio/revealui-template-e-commerce)
-- [Governed Agent Run on Apify](https://apify.com/revealuistudio/governed-agent-run) — PPE $0.00001, not free
+- [Governed Agent Run on Apify](https://apify.com/revealuistudio/governed-agent-run): PPE $0.00001, not free
 
 ## Studio · [revealuistudio.com](https://revealuistudio.com)
 
-Three public offers. Book a 30-minute intro on Google Calendar. No account. No payment to book. Paid work is invoiced after we agree.
+Book a 30-minute intro on Google Calendar. No account. No payment to book. Paid work is invoiced after we agree.
 
-- **Consultation** — $300
-- **Pilot** — $1,500
-- **Launch** — $7,500
+- **Consultation:** $300/hr (default 1 hour)
+- **Pilot:** $3,997 (includes 1 Adapter; 100% credit toward Launch within 45 days)
+- **Launch:** $14,500 (up to 3 Adapters)
+- **Care:** $1,997/mo (optional)
+- **Adapter:** $2,497 (one tool category per unit; added to Pilot, Launch, or Care, never sold alone)
+- **Domain add-on:** $297 (after a Consultation alone; included with Pilot and Launch)
 
 Architecture work is inside Launch. Pilot is one site on your domain.
 
@@ -36,8 +39,8 @@ Architecture work is inside Launch. Pilot is one site on your domain.
 
 Public-good tooling the studio uses and open-sources.
 
-- [**RevVault**](https://github.com/RevealUIStudio/revvault) — age-encrypted secret vault. Rust CLI + Tauri desktop app. 100% passage-compatible.
-- [**RevSkills**](https://github.com/RevealUIStudio/revskills) — Claude Code skills used in production at the studio: `next-best-practices`, `tailwind-v4`, `security-hardening`. Install via `npx skills add RevealUIStudio/revskills`. Listed on [agentskills.io](https://agentskills.io).
+- [**RevVault**](https://github.com/RevealUIStudio/revvault): age-encrypted secret vault. Rust CLI + Tauri desktop app. 100% passage-compatible.
+- [**RevSkills**](https://github.com/RevealUIStudio/revskills): Claude Code skills used in production at the studio: `next-best-practices`, `tailwind-v4`, `security-hardening`. Install via `npx skills add RevealUIStudio/revskills`. Listed on [agentskills.io](https://agentskills.io).
 
 ---
 
